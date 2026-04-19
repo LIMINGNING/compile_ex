@@ -1,6 +1,5 @@
 package cn.edu.hitsz.compiler.parser;
 
-import cn.edu.hitsz.compiler.NotImplementedException;
 import cn.edu.hitsz.compiler.lexer.Token;
 import cn.edu.hitsz.compiler.parser.table.LRTable;
 import cn.edu.hitsz.compiler.parser.table.Production;
@@ -23,7 +22,8 @@ import java.util.List;
 public class SyntaxAnalyzer {
     private final SymbolTable symbolTable;
     private final List<ActionObserver> observers = new ArrayList<>();
-
+    private final List<Token> tokens = new ArrayList<>();
+    private LRTable table;
 
     public SyntaxAnalyzer(SymbolTable symbolTable) {
         this.symbolTable = symbolTable;
@@ -79,21 +79,70 @@ public class SyntaxAnalyzer {
         // 你可以自行选择要如何存储词法单元, 譬如使用迭代器, 或是栈, 或是干脆使用一个 list 全存起来
         // 需要注意的是, 在实现驱动程序的过程中, 你会需要面对只读取一个 token 而不能消耗它的情况,
         // 在自行设计的时候请加以考虑此种情况
-        throw new NotImplementedException();
+        this.tokens.clear();
+        for (final var token : tokens) {
+            this.tokens.add(token);
+        }
     }
 
     public void loadLRTable(LRTable table) {
         // TODO: 加载 LR 分析表
         // 你可以自行选择要如何使用该表格:
         // 是直接对 LRTable 调用 getAction/getGoto, 抑或是直接将 initStatus 存起来使用
-        throw new NotImplementedException();
+        this.table = table;
     }
 
     public void run() {
         // TODO: 实现驱动程序
         // 你需要根据上面的输入来实现 LR 语法分析的驱动程序
-        // 请分别在遇到 Shift, Reduce, Accept 的时候调用上面的 callWhenInShift, callWhenInReduce, callWhenInAccept
+        // 请分别在遇到 Shift, Reduce, Accept 的时候调用上面的 callWhenInShift, callWhenInReduce,
+        // callWhenInAccept
         // 否则用于为实验二打分的产生式输出可能不会正常工作
-        throw new NotImplementedException();
+        if (table == null) {
+            throw new RuntimeException("LR table is not loaded");
+        }
+        if (tokens.isEmpty()) {
+            throw new RuntimeException("Token stream is not loaded");
+        }
+
+        final var statusStack = new ArrayList<Status>();
+        statusStack.add(table.getInit());
+
+        int tokenIndex = 0;
+        while (true) {
+            final var currentStatus = statusStack.get(statusStack.size() - 1);
+            final var currentToken = tokens.get(tokenIndex);
+            final var action = table.getAction(currentStatus, currentToken);
+
+            switch (action.getKind()) {
+                case Shift -> {
+                    callWhenInShift(currentStatus, currentToken);
+                    statusStack.add(action.getStatus());
+                    tokenIndex++;
+                }
+                case Reduce -> {
+                    final var production = action.getProduction();
+                    for (int i = 0; i < production.body().size(); i++) {
+                        statusStack.remove(statusStack.size() - 1);
+                    }
+
+                    final var gotoFromStatus = statusStack.get(statusStack.size() - 1);
+                    callWhenInReduce(gotoFromStatus, production);
+
+                    final var nextStatus = table.getGoto(gotoFromStatus, production.head());
+                    if (nextStatus.isError()) {
+                        throw new RuntimeException("No goto for status %s and non-terminal %s"
+                                .formatted(gotoFromStatus, production.head()));
+                    }
+                    statusStack.add(nextStatus);
+                }
+                case Accept -> {
+                    callWhenInAccept(currentStatus);
+                    return;
+                }
+                case Error -> throw new RuntimeException(
+                        "Syntax error at token %s with status %s".formatted(currentToken, currentStatus));
+            }
+        }
     }
 }
