@@ -6,7 +6,9 @@ import cn.edu.hitsz.compiler.parser.table.Production;
 import cn.edu.hitsz.compiler.parser.table.Status;
 import cn.edu.hitsz.compiler.symtab.SymbolTable;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 
 //TODO: 实验二: 实现 LR 语法分析驱动程序
@@ -23,7 +25,8 @@ public class SyntaxAnalyzer {
     private final SymbolTable symbolTable;
     private final List<ActionObserver> observers = new ArrayList<>();
     private final List<Token> tokens = new ArrayList<>();
-    private LRTable table;
+    private LRTable lrTable;
+
 
     public SyntaxAnalyzer(SymbolTable symbolTable) {
         this.symbolTable = symbolTable;
@@ -89,7 +92,7 @@ public class SyntaxAnalyzer {
         // TODO: 加载 LR 分析表
         // 你可以自行选择要如何使用该表格:
         // 是直接对 LRTable 调用 getAction/getGoto, 抑或是直接将 initStatus 存起来使用
-        this.table = table;
+        this.lrTable = table;
     }
 
     public void run() {
@@ -98,51 +101,53 @@ public class SyntaxAnalyzer {
         // 请分别在遇到 Shift, Reduce, Accept 的时候调用上面的 callWhenInShift, callWhenInReduce,
         // callWhenInAccept
         // 否则用于为实验二打分的产生式输出可能不会正常工作
-        if (table == null) {
-            throw new RuntimeException("LR table is not loaded");
+        if (lrTable == null) {
+            throw new RuntimeException("LR table has not been loaded");
         }
         if (tokens.isEmpty()) {
-            throw new RuntimeException("Token stream is not loaded");
+            throw new RuntimeException("Tokens have not been loaded");
         }
 
-        final var statusStack = new ArrayList<Status>();
-        statusStack.add(table.getInit());
+        final Deque<Status> statusStack = new ArrayDeque<>();
+        statusStack.push(lrTable.getInit());
 
         int tokenIndex = 0;
-        while (true) {
-            final var currentStatus = statusStack.get(statusStack.size() - 1);
+        while (tokenIndex < tokens.size()) {
+            final var currentStatus = statusStack.peek();
             final var currentToken = tokens.get(tokenIndex);
-            final var action = table.getAction(currentStatus, currentToken);
+            final var action = lrTable.getAction(currentStatus, currentToken);
 
             switch (action.getKind()) {
                 case Shift -> {
                     callWhenInShift(currentStatus, currentToken);
-                    statusStack.add(action.getStatus());
+                    statusStack.push(action.getStatus());
                     tokenIndex++;
                 }
                 case Reduce -> {
                     final var production = action.getProduction();
                     for (int i = 0; i < production.body().size(); i++) {
-                        statusStack.remove(statusStack.size() - 1);
+                        statusStack.pop();
                     }
 
-                    final var gotoFromStatus = statusStack.get(statusStack.size() - 1);
-                    callWhenInReduce(gotoFromStatus, production);
+                    final var statusAfterReduce = statusStack.peek();
+                    callWhenInReduce(statusAfterReduce, production);
 
-                    final var nextStatus = table.getGoto(gotoFromStatus, production.head());
-                    if (nextStatus.isError()) {
-                        throw new RuntimeException("No goto for status %s and non-terminal %s"
-                                .formatted(gotoFromStatus, production.head()));
+                    final var gotoStatus = lrTable.getGoto(statusAfterReduce, production.head());
+                    if (gotoStatus.isError()) {
+                        throw new RuntimeException("Goto error at status %s with production %s"
+                                .formatted(statusAfterReduce, production));
                     }
-                    statusStack.add(nextStatus);
+                    statusStack.push(gotoStatus);
                 }
                 case Accept -> {
                     callWhenInAccept(currentStatus);
                     return;
                 }
-                case Error -> throw new RuntimeException(
-                        "Syntax error at token %s with status %s".formatted(currentToken, currentStatus));
+                case Error -> throw new RuntimeException("Unexpected token %s at status %s"
+                        .formatted(currentToken, currentStatus));
             }
         }
+
+        throw new RuntimeException("Unexpected end of token stream");
     }
 }
